@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { currentGame } from "@/lib/time";
 import { json, requireAdmin } from "@/lib/security";
+import { envIssues } from "@/lib/env";
 import type { SpotStatus } from "@/lib/spots";
 
 export const runtime = "nodejs";
@@ -34,9 +35,25 @@ export async function GET(req: Request) {
         createdAt: new Date(r.created_at).toISOString(),
         paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
       })),
+      // Names only, never values. Lets the organiser page say what still needs setting up.
+      setup: envIssues(),
     });
   } catch (err) {
-    console.error("[admin]", (err as Error).message);
-    return json({ error: "Couldn’t load the list." }, 503);
+    const message = (err as Error).message;
+    console.error("[admin]", message);
+    // The caller is already signed in as the organiser, so a short reason is safe to show.
+    const noDb = /DATABASE_URL/.test(message);
+    const noTable = /relation .* does not exist/.test(message);
+    return json(
+      {
+        error: noDb
+          ? "DATABASE_URL isn’t set on the server."
+          : noTable
+            ? "The database tables are missing. Run db/schema.sql in your database."
+            : "Couldn’t reach the database. Check DATABASE_URL.",
+        setup: envIssues(),
+      },
+      503,
+    );
   }
 }
