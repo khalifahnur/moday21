@@ -25,15 +25,57 @@ const schema = z.object({
 export type Env = z.infer<typeof schema>;
 let cached: Env | null = null;
 
+/**
+ * Cleans a pasted value: trims spaces/newlines and strips one pair of wrapping quotes.
+ * Empty values count as "not set". Hosting dashboards make stray spaces and quotes easy to paste.
+ */
+function clean(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  let v = value.trim();
+  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) v = v.slice(1, -1).trim();
+  return v === "" ? undefined : v;
+}
+
+const source = () => Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, clean(v)]));
+
+/** Names (never values) of settings that are missing or invalid. Empty when everything is fine. */
+export function envIssues(): string[] {
+  const parsed = schema.safeParse(source());
+  return parsed.success ? [] : [...new Set(parsed.error.issues.map((i) => i.path.join(".")))];
+}
+
 export function env(): Env {
   if (cached) return cached;
-  // Treat empty values in .env as "not set".
-  const source = Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, v === "" ? undefined : v]));
-  const parsed = schema.safeParse(source);
+  const parsed = schema.safeParse(source());
   if (!parsed.success) {
-    const bad = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
+    const bad = [...new Set(parsed.error.issues.map((i) => i.path.join(".")))].join(", ");
     throw new Error(`Missing or invalid environment variables: ${bad}`);
   }
   cached = parsed.data;
   return cached;
+}
+
+/**
+ * Narrow readers for routes that only need one setting. They don't depend on the
+ * M-Pesa settings, so the organiser page keeps working while payments are being set up.
+ */
+export function adminToken(): string | undefined {
+  const t = clean(process.env.ADMIN_TOKEN);
+  return t && t.length >= 32 ? t : undefined;
+}
+
+export function appOrigin(): string | undefined {
+  const o = clean(process.env.APP_ORIGIN);
+  if (!o) return undefined;
+  try {
+    return new URL(o).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+export function databaseUrl(): string {
+  const u = clean(process.env.DATABASE_URL);
+  if (!u) throw new Error("DATABASE_URL is not set");
+  return u;
 }

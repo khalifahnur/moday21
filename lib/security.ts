@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { env } from "./env";
+import { adminToken, appOrigin, env } from "./env";
 
 /** JSON response that is never cached by browsers or CDNs. */
 export function json(data: unknown, status = 200) {
@@ -43,8 +43,8 @@ export function clientIp(req: Request): string {
 export function isSameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return false;
-  const allowed = env().APP_ORIGIN;
-  if (allowed) return origin === new URL(allowed).origin;
+  const allowed = appOrigin();
+  if (allowed) return origin === allowed;
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
   try {
     return !!host && new URL(origin).host === host;
@@ -65,8 +65,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Admin routes require `Authorization: Bearer <ADMIN_TOKEN>`. Returns an error response or null. */
 export async function requireAdmin(req: Request): Promise<Response | null> {
   const header = req.headers.get("authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  if (token && safeEqual(token, env().ADMIN_TOKEN)) return null;
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const expected = adminToken();
+  if (!expected) {
+    return json({ error: "ADMIN_TOKEN isn’t set on the server, or it’s shorter than 32 characters. Fix it in your hosting settings and redeploy." }, 503);
+  }
+  if (token && safeEqual(token, expected)) return null;
   await sleep(400 + Math.random() * 400); // slows down guessing
   return json({ error: "Wrong admin password." }, 401);
 }
